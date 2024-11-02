@@ -20,81 +20,122 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI()
 
-# Add CORS middleware
+# Add CORS middleware with more permissive settings
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Replace with your React app's URL
+    allow_origins=["*"],  # Allows all origins
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # Allows all methods
+    allow_headers=["*"],  # Allows all headers
 )
 
 TMDB_API_KEY = os.getenv("TMDB_API_KEY")
 TMDB_BASE_URL = "https://api.themoviedb.org/3"
 
 
-async def fetch_movies(url):
-    async with httpx.AsyncClient() as client:
-        try:
-            response = await client.get(url)
-            response.raise_for_status()
-            return response.json()
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error occurred while fetching movies: {e}")
-            raise
-        except Exception as e:
-            logger.error(f"An error occurred while fetching movies: {e}")
-            raise
-
-
-async def fetch_all_movies(urls):
-    try:
-        tasks = [fetch_movies(url) for url in urls]
-        responses = await asyncio.gather(*tasks)
-        return [movie["results"][0] for movie in responses if movie["results"]]
-    except Exception as e:
-        logger.error(f"An error occurred while fetching all movies: {e}")
-        raise
-
-
 @app.get("/recommend")
 async def get_movies(query: str):
     try:
-        start_time = time.time()
-        content = createPrompts(query)
-        content = query + "," + content
+        overall_start_time = time.time()
 
-        search_urls = [f"{TMDB_BASE_URL}/search/movie?api_key={TMDB_API_KEY}&query={record}&language=en-US&page=1&include_adult=true"
-                       for record in content.split(",")]
-        movies_data = await fetch_all_movies(search_urls)
+        # Fetch autocomplete results
+        autocomplete_url = f"http://localhost:8000/autocomplete?term={query}"
+        async with httpx.AsyncClient() as client:
+            response = await client.get(autocomplete_url)
+            autocomplete_data = response.json()
 
-        movies = []
-        for movie in movies_data:
-            poster_path = movie["poster_path"]
-            poster_url = f"https://image.tmdb.org/t/p/w600_and_h900_bestv2/{poster_path}" if poster_path else None
-            if poster_url:
-                movies.append({
-                    "id": movie['id'],
-                    "title": movie['title'],
-                    "year": movie['release_date'][:4] if movie['release_date'] else None,
-                    "genre_ids": movie['genre_ids'],
-                    "posterUrl": poster_url,
-                    "overview": movie['overview']
-                })
+        if not autocomplete_data["movie"]:
+            raise HTTPException(status_code=404, detail="No movie found")
 
-        # Add genre names to movies
-        for movie in movies:
-            movie['genres'] = [GENRES[genre_id] for genre_id in movie['genre_ids'] if genre_id in GENRES]
-            del movie['genre_ids']
-        print(f"time taken is {time.time() - start_time}")
-        return {"movies": movies[1:],
-                "given_movie": movies[0]}
+        # Get the URL of the first movie from autocomplete results
+        movie_url = f"https://bestsimilar.com{autocomplete_data['movie'][0]['url']}"
+
+        # Fetch similar movies and movie details concurrently
+        async with httpx.AsyncClient() as client:
+            similar_movies_task = asyncio.create_task(fetch_similar_movies(client, movie_url))
+            similar_movies = await similar_movies_task
+
+        # Limit the number of similar movies to process
+        # similar_movies = similar_movies[:10]  # Process only top 10 similar movies
+
+        # Fetch movie details concurrently
+        movies = await fetch_movie_details(similar_movies)
+
+        overall_time = time.time() - overall_start_time
+        print(f"Total time taken: {overall_time:.2f} seconds")
+
+        return {"movies": movies[1:], "given_movie": movies[0]}
     except httpx.HTTPStatusError as e:
         logger.error(f"HTTP error occurred: {e}")
         raise HTTPException(status_code=e.response.status_code, detail=str(e))
     except Exception as e:
         logger.error(f"An unexpected error occurred: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+async def fetch_similar_movies(client, movie_url):
+    response = await client.get(movie_url)
+    html_content = response.text
+    return extract_similar_movies(html_content)
+
+async def fetch_movie_details(movie_titles):
+    async with httpx.AsyncClient() as client:
+        tasks = [fetch_single_movie_detail(client, title) for title in movie_titles]
+        movies = await asyncio.gather(*tasks)
+    return [movie for movie in movies if movie is not None]
+
+async def fetch_single_movie_detail(client, title):
+    clean_title = title.split('(')[0].strip()
+    search_url = f"{TMDB_BASE_URL}/search/movie?api_key={TMDB_API_KEY}&query={clean_title}&language=en-US&page=1&include_adult=true"
+    response = await client.get(search_url)
+    data = response.json()
+    if data["results"]:
+        movie = data["results"][0]
+        poster_path = movie.get("poster_path")
+        if poster_path:
+            return {
+                "id": movie['id'],
+                "title": movie['title'],
+                "year": movie['release_date'][:4] if movie.get('release_date') else None,
+                "genres": [GENRES.get(genre_id) for genre_id in movie.get('genre_ids', []) if genre_id in GENRES],
+                "posterUrl": f"https://image.tmdb.org/t/p/w600_and_h900_bestv2/{poster_path}",
+                "overview": movie['overview']
+            }
+    return None
+
+def extract_similar_movies(html_content):
+    from bs4 import BeautifulSoup
+    soup = BeautifulSoup(html_content, 'html.parser')
+    script_tag = soup.find('script', text=lambda string: string and 'aMovieTrailerLists' in string)
+    if script_tag:
+        content = script_tag.string
+        movies = []
+        start = 0
+        while True:
+            name_start = content.find('"name":"', start)
+            if name_start == -1:
+                break
+            name_start += 7  # Length of 'name: "'
+            name_end = content.find('(', name_start)
+            if name_end == -1:
+                name_end = content.find('"', name_start)
+            if name_end != -1:
+                movie_name = content[name_start+1:name_end].strip()
+                movies.append(movie_name)
+            start = name_end
+        return list(set(movies))
+    return []
+
+@app.get("/autocomplete")
+async def autocomplete(term: str):
+    url = "https://bestsimilar.com/site/autocomplete"
+    params = {"term": term}
+    headers = {
+        "X-Requested-With": "XMLHttpRequest",
+    }
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.get(url, params=params, headers=headers)
+        return response.json()
 
 
 if __name__ == "__main__":
