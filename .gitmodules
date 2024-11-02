@@ -1,0 +1,3 @@
+[submodule "movie-recommendations"]
+	path = movie-recommendations
+	url = git@github.com:WhoJoshi69/Movie_Recommendation.git
