@@ -9,8 +9,8 @@ import os
 from dotenv import load_dotenv
 import requests
 
-from backend.constants import GENRES
-from backend.movie_gen import createPrompts
+from constants import GENRES
+from movie_gen import createPrompts
 
 load_dotenv()
 
