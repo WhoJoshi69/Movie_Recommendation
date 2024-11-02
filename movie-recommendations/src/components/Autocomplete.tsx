@@ -90,12 +90,12 @@ const Autocomplete: React.FC<AutocompleteProps> = ({ onSearch, fetchSuggestions,
         className={className}
       />
       {showSuggestions && suggestions.length > 0 && (
-        <ul className="absolute z-10 w-full bg-black border border-gray-700 rounded-md mt-1 max-h-60 overflow-auto">
+        <ul className="absolute z-10 w-full bg-gray-800 border border-gray-700 rounded-md mt-1 max-h-60 overflow-auto">
           {suggestions.map((suggestion, index) => (
             <li
               key={index}
               onClick={() => handleSuggestionClick(suggestion)}
-              className={`px-4 py-2 hover:bg-gray-700 cursor-pointer ${
+              className={`px-4 py-2 text-white hover:bg-gray-700 cursor-pointer ${
                 index === selectedIndex ? 'bg-gray-700' : ''
               }`}
             >

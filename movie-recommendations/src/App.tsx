@@ -78,7 +78,11 @@ export default function App() {
   }, []);
 
   return (
-    <div className={`h-screen flex flex-col ${darkMode ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-900'} transition-colors duration-500`}>
+    <div 
+      className={`min-h-screen flex flex-col transition-all duration-1000 ${
+        darkMode ? 'dark-gradient' : 'light-gradient'
+      }`}
+    >
       <SwirlCursor />
       <Header darkMode={darkMode} setDarkMode={setDarkMode} />
       <main className="flex-1 overflow-hidden pt-24">
@@ -127,7 +131,11 @@ export default function App() {
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.9, opacity: 0 }}
               transition={{ type: "spring", damping: 15, stiffness: 100 }}
-              className={`${darkMode ? 'bg-gray-800 text-white' : 'bg-white text-gray-900'} rounded-lg p-8 max-w-2xl w-full overflow-hidden`}
+              className={`rounded-lg p-8 max-w-2xl w-full overflow-hidden backdrop-blur-md ${
+                darkMode 
+                  ? 'dark-gradient bg-opacity-90 text-white' 
+                  : 'light-gradient bg-opacity-90 text-gray-900'
+              }`}
               onClick={(e) => e.stopPropagation()}
             >
               <motion.h2 
